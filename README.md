@@ -4,7 +4,7 @@ A simple source code weaver for Go programs
 ## Method
 - Put the weaves in their own directory (default is `ext`) with a fully qualified package path
 - Ensure the `weaver` executable is in the `PATH`
-- Run `go generate ext/*`
+- Run `go build cmd/weaver/weaver.go  ;  ./weaver -weaveRoot ext`
 
 ## 
 - Pick-up the weave definition files from the `ext` directory
@@ -25,9 +25,9 @@ A simple source code weaver for Go programs
   - Handle the whole, big, _What to do with the Package?_ problem
   
 ## References
-- https://golang.org/pkg/go/ast/#ImportSpec
+- https://golang.org/pkg/go/ast/
 - https://github.com/fatih/astrewrite/blob/master/astrewrite.go
-- https://godoc.org/golang.org/x/tools/go/ast/astutil#Cursor.InsertAfter
+- https://godoc.org/golang.org/x/tools/go/ast/astutil
 - https://zupzup.org/ast-manipulation-go/
 - https://zupzup.org/go-ast-traversal/
 - https://godoc.org/golang.org/x/tools/go/ast/inspector
