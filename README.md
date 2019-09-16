@@ -24,6 +24,10 @@ A simple source code weaver for Go programs
 - Write modified AST
   - Handle the whole, big, _What to do with the Package?_ problem
   
+## Annotations
+- Set the fully qualified name of the package to weave. This _must_ go at the head of the weave file *before* the `package` declaration!
+  - `// +weaver packageFQN fully/qualified/package/name`
+  
 ## References
 - https://golang.org/pkg/go/ast/
 - https://github.com/fatih/astrewrite/blob/master/astrewrite.go
