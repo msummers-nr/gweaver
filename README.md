@@ -19,10 +19,13 @@ A simple source code weaver for Go programs
   
 ## To Do
 - Handle `import` CRUD
-- Rename original `func` on `surround`
+- ~~Rename original `func` on `surround`~~
 - Allow for line-end comments as control in weave
 - Write modified AST
   - Handle the whole, big, _What to do with the Package?_ problem
+     1. Where to write the woven package?
+     2. Create the `go.mod` file in the woven packages root
+     3. Use `go mod edit` to add the `replace` to the app's `go.mod` file (?)
   
 ## Annotations
 - Set the fully qualified name of the package to weave. This _must_ go at the head of the weave file *before* the `package` declaration!

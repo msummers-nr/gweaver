@@ -7,6 +7,9 @@ import (
 	"go/printer"
 	"golang.org/x/tools/go/ast/astutil"
 	"golang.org/x/tools/go/packages"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"strings"
 )
@@ -17,11 +20,10 @@ type source struct {
 }
 
 func NewPackage(p string) *source {
-	log.Debugf("NewPackage: name: %s", p)
+	log.Tracef("NewPackage: name: %s", p)
 	//p = "./" + p
 	cfg := &packages.Config{
-		//Mode:  packages.NeedName | packages.NeedSyntax | packages.NeedFiles | packages.NeedImports | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedTypesSizes,
-		Mode:  packages.NeedName | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedTypesSizes,
+		Mode:  packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedImports | packages.NeedTypes | packages.NeedTypesSizes | packages.NeedSyntax | packages.NeedTypesInfo | packages.NeedDeps,
 		Tests: false,
 	}
 	pkgs, err := packages.Load(cfg, p)
@@ -34,7 +36,7 @@ func NewPackage(p string) *source {
 	if pkgs[0].Errors != nil {
 		log.Fatalf("Error loading package: %s error: %+v", p, pkgs[0].Errors)
 	}
-	log.Debugf("NewPackage: package: %+v", pkgs[0])
+	log.Tracef("NewPackage: package: %+v", pkgs[0])
 	return &source{pkg: pkgs[0]}
 }
 
@@ -46,15 +48,16 @@ func (p *source) ApplyWeave(w *weave) {
 		}
 	}()
 
-	log.Debugf("ApplyWeave")
+	log.Tracef("ApplyWeave")
 
 	// TODO some operations should happen on the parent, delete for instance
 	// preApply & postApply go inside this method so they can capture the weaver pointer
 	preApply := func(c *astutil.Cursor) (ok bool) {
 		// Insert everything before the first FuncDecl
+		// TODO rather than "first" inserts should be by file
 		if p.firstFunc(c.Node()) {
 			for _, v := range w.getInserts() {
-				log.Debugf("Inserting: %+v", *v)
+				log.Tracef("Inserting: %+v", *v)
 				c.InsertBefore(*v)
 			}
 		}
@@ -62,13 +65,13 @@ func (p *source) ApplyWeave(w *weave) {
 		// Let's see if we replace this node
 		wn, ok := w.getReplace(c.Node())
 		if ok {
-			log.Debugf("Replace: %+v with: %+v", c.Node(), *wn)
+			log.Tracef("Replace: %+v with: %+v", c.Node(), *wn)
 			c.Replace(*wn)
 		}
 
 		wn, ok = w.getReplaceAndCallOriginal(c.Node())
 		if ok {
-			log.Debugf("ReplaceAndCallOriginal: %+v with: %+v", c.Node(), *wn)
+			log.Tracef("ReplaceAndCallOriginal: %+v with: %+v", c.Node(), *wn)
 			renameAsOriginal(c.Node())
 			c.InsertBefore(*wn)
 		}
@@ -76,7 +79,7 @@ func (p *source) ApplyWeave(w *weave) {
 		// See if we delete this node
 		wn, ok = w.getDelete(c.Node())
 		if ok {
-			log.Debugf("Delete: %+v", c.Node())
+			log.Tracef("Delete: %+v", c.Node())
 			c.Delete()
 		}
 		return true
@@ -86,11 +89,13 @@ func (p *source) ApplyWeave(w *weave) {
 		return true
 	}
 
-	//log.Debugf("ApplyWeave: processing p: %+v", *p)
-	//log.Debugf("ApplyWeave: processing p.pkg: %+v", *p.pkg)
+	log.Tracef("ApplyWeave: processing p: %+v", *p)
+	log.Tracef("ApplyWeave: processing p.pkg: %+v", *p.pkg)
 	// For each file's AST in the package
-	for _, f := range p.pkg.Syntax {
-		//		log.Debugf("ApplyWeave: processing f: %+v", f)
+	// TODO copy package to
+	p.copyDir()
+	for fi, f := range p.pkg.Syntax {
+		log.Tracef("ApplyWeave: processing f: %+v", f)
 		for _, i := range w.importAdds {
 			if i.Name == nil {
 				astutil.AddImport(p.pkg.Fset, f, pathFix(i.Path.Value))
@@ -106,11 +111,15 @@ func (p *source) ApplyWeave(w *weave) {
 			}
 		}
 		p.isFirstFunction = true
-		log.Debugf("ApplyWeave: f: %+v", f)
+		log.Tracef("ApplyWeave: f: %+v", f)
 		rewritten := astutil.Apply(f, preApply, postApply)
 		var buf bytes.Buffer
 		printer.Fprint(&buf, p.pkg.Fset, rewritten)
-		log.Debugf("Woven result:\n%s\n", buf.String())
+		p.importPath(f)
+		log.Debugf("Writing file: %s", p.pkg.CompiledGoFiles[fi])
+		//spew.Dump(f)
+		//fmt.Println(buf.String())
+		//ast.Print(p.pkg.Fset, rewritten)
 		// TODO Write must happen per file
 	}
 }
@@ -144,5 +153,30 @@ func (p *source) firstFunc(n ast.Node) (yes bool) {
 }
 
 func (p *source) Write() {
+	for f := range p.pkg.Syntax {
+		ast.Print(p.pkg.Fset, f)
+	}
+}
 
+func (p *source) importPath(file *ast.File) {
+	log.Debugf("importPath: path: %s file name: %s", p.pkg.PkgPath, file.Name.Name)
+}
+
+func (p *source) copyDir() {
+	src := filepath.Dir(p.pkg.CompiledGoFiles[0])
+	var err error
+	dst := src + ".original"
+	if runtime.GOOS == "windows" {
+		cmd := exec.Command("Xcopy", "/E /I ", src, dst)
+		log.Printf("copyDir: cmd: %s", cmd.String())
+		err = cmd.Run()
+
+	} else {
+		cmd := exec.Command("cp", "-a", src, dst)
+		log.Printf("copyDir: cmd: %s", cmd.String())
+		err = cmd.Run()
+	}
+	if err != nil {
+		log.Errorf("copyDir: error: %+v", err)
+	}
 }

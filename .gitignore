@@ -1,2 +1,5 @@
 .idea
+cmd/scratch
+ext/
+testing/
 weaver

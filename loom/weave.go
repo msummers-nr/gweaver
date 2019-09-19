@@ -1,7 +1,6 @@
 package loom
 
 import (
-	"github.com/davecgh/go-spew/spew"
 	log "github.com/sirupsen/logrus"
 	"go/ast"
 	"go/parser"
@@ -42,9 +41,9 @@ func NewWeave(filename string) (w *weave) {
 		log.Fatal(err)
 	}
 
-	log.Debugf("Weaver package: %+v\n", f.Name)
+	log.Tracef("Weaver package: %+v\n", f.Name)
 	for _, c := range f.Comments {
-		log.Debugf("%+v\n", c.Text())
+		log.Tracef("%+v\n", c.Text())
 	}
 
 	w = &weave{file: f, inserts: make(map[string]*ast.Node), deletes: make(map[string]*ast.Node), replaces: make(map[string]*ast.Node), replaceAndCallOriginals: make(map[string]*ast.Node)}
@@ -54,8 +53,8 @@ func NewWeave(filename string) (w *weave) {
 		switch t := n.(type) {
 
 		case *ast.FuncDecl:
-			log.Debugf("Inspect: type: %T value: %+v", t, t)
-			spew.Dump(t)
+			log.Tracef("Inspect: type: %T value: %+v", t, t)
+			//spew.Dump(t)
 			op := w.parseCommentGroup(t.Doc)
 			if op == nop {
 				break
@@ -70,7 +69,7 @@ func NewWeave(filename string) (w *weave) {
 
 			// GenDecl covers const, import, type, and var with Doc (block) comments
 		case *ast.GenDecl:
-			log.Debugf("Inspect: type: %T value: %+v", t, t)
+			log.Tracef("Inspect: type: %T value: %+v", t, t)
 			op := w.parseCommentGroup(t.Doc)
 			if op == nop {
 				break
@@ -88,44 +87,44 @@ func NewWeave(filename string) (w *weave) {
 
 			// These 3 cases cover const, import, type, and  var with line comments
 		case *ast.ImportSpec:
-			log.Debugf("Inspect: type: %T value: %+v", t, t)
+			log.Tracef("Inspect: type: %T value: %+v", t, t)
 			op := w.parseCommentGroup(t.Comment)
 			if op == nop {
 				break
 			}
 			w.addImport(op, t)
 		case *ast.TypeSpec:
-			log.Debugf("Inspect: type: %T value: %+v", t, t)
+			log.Tracef("Inspect: type: %T value: %+v", t, t)
 			op := w.parseCommentGroup(t.Comment)
 			if op == nop {
 				break
 			}
 			w.addNode(op, t.Name.Name, &n)
 		case *ast.ValueSpec: // const is also a value spec
-			log.Debugf("Inspect: type: %T value: %+v", t, t)
+			log.Tracef("Inspect: type: %T value: %+v", t, t)
 			op := w.parseCommentGroup(t.Comment)
 			if op == nop {
 				break
 			}
 			w.addNode(op, valueSpecName(t.Names), &n)
 		case *ast.CommentGroup:
-			log.Debugf("Inspect: type: %T value: %+v", t, t)
+			log.Tracef("Inspect: type: %T value: %+v", t, t)
 			w.parseCommentGroup(t)
 		case *ast.Comment:
-			log.Debugf("Inspect: type: %T value: %+v", t, t)
+			log.Tracef("Inspect: type: %T value: %+v", t, t)
 			w.parseComment(t)
 		default:
-			log.Debugf("Inspect: type: %T value: %+v", t, t)
+			log.Tracef("Inspect: type: %T value: %+v", t, t)
 		}
 		return true
 	})
 
-	log.Debugf("Parsed weave:\n %+v \n", w)
+	log.Tracef("Parsed weave:\n %+v \n", w)
 	return
 }
 
 func (w *weave) replaceOriginal(decl *ast.FuncDecl, node *ast.Node) (op string) {
-	log.Debugf("replaceOriginal: decl: %+v node: %+v", *decl, *node)
+	log.Tracef("replaceOriginal: decl: %+v node: %+v", *decl, *node)
 	op = replace
 	// rename the original
 	originalFnName := decl.Name.Name
@@ -135,9 +134,9 @@ func (w *weave) replaceOriginal(decl *ast.FuncDecl, node *ast.Node) (op string) 
 	ast.Inspect(*node, func(n ast.Node) bool {
 		switch t := n.(type) {
 		case *ast.CallExpr:
-			log.Debugf("\treplaceOriginal: Inspect: type: %T value: %+v", t, t)
+			log.Tracef("\treplaceOriginal: Inspect: type: %T value: %+v", t, t)
 		default:
-			log.Debugf("\treplaceOriginal: Inspect: type: %T value: %+v", t, t)
+			log.Tracef("\treplaceOriginal: Inspect: type: %T value: %+v", t, t)
 		}
 		return true
 	})
@@ -184,7 +183,7 @@ func (w *weave) processImportSpec(n *ast.Node, gd *ast.ImportSpec, op string, na
 func getGenDeclName(decl *ast.GenDecl) (name string) {
 	switch l := len(decl.Specs); l {
 	case 0:
-		spew.Dump(decl)
+		//spew.Dump(decl)
 		log.Fatalf("GenDecl has no Specs")
 	case 1:
 		switch t := decl.Specs[0].(type) {
@@ -239,7 +238,7 @@ func valueSpecName(i []*ast.Ident) string {
 //    - debug comment
 //    - ?
 func (w *weave) parseCommentGroup(group *ast.CommentGroup) (op string) {
-	//log.Debugf("parseCommentGroup:  group: %+v", group)
+	//log.Tracef("parseCommentGroup:  group: %+v", group)
 	op = nop
 	if group == nil {
 		return
@@ -257,7 +256,7 @@ func (w *weave) parseComment(c *ast.Comment) (op string, ok bool) {
 	op = nop
 	ok = false
 	s := strings.ToLower(strings.Trim(c.Text, " "))
-	log.Debugf("parseComment: %s", s)
+	log.Tracef("parseComment: %s", s)
 	if !strings.Contains(s, weaverSuffix) {
 		return
 	}
@@ -279,11 +278,11 @@ func (w *weave) parseComment(c *ast.Comment) (op string, ok bool) {
 		p := strings.Split(s, separator)
 		if len(p) != 4 {
 			for i, v := range p {
-				log.Debugf("parseComment: i: %d v: %s", i, v)
+				log.Tracef("parseComment: i: %d v: %s", i, v)
 			}
 			log.Fatalf("parseComment: invalid packageFQN annotation: len: %d %+v text: %s", c, s)
 		}
-		log.Debugf("parseComment: packageName: %s", w.packageName)
+		log.Tracef("parseComment: packageName: %s", w.packageName)
 		w.packageName = p[3]
 		op = packageFQN
 		ok = true
@@ -292,7 +291,7 @@ func (w *weave) parseComment(c *ast.Comment) (op string, ok bool) {
 }
 
 func (w *weave) GetPackageName() string {
-	log.Debugf("GetPackageName: %s", w.packageName)
+	log.Tracef("GetPackageName: %s", w.packageName)
 	return w.packageName
 }
 
