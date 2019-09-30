@@ -1,24 +1,27 @@
-package loom
+package weave
 
 import (
 	log "github.com/sirupsen/logrus"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
 
-// TODO Weaves must be per file- this fixes the import problem
-type weave struct {
+type Pkg struct {
+	weaves map[string]*Weave
+}
+
+type Weave struct {
 	file                    *ast.File
 	inserts                 map[string]*ast.Node
 	deletes                 map[string]*ast.Node
 	replaces                map[string]*ast.Node
 	replaceAndCallOriginals map[string]*ast.Node
-	importAdds              []*ast.ImportSpec
-	importDeletes           []*ast.ImportSpec
-	packageName             string
+	ImportAdds              []*ast.ImportSpec
+	ImportDeletes           []*ast.ImportSpec
 }
 
 // Warning: I always compare to lowerCase so ensure the constants are lower case
@@ -34,21 +37,29 @@ const (
 	originalSuffix         string = "Original"
 )
 
-func NewWeave(filename string) (w *weave) {
-	fset := token.NewFileSet() // positions are relative to fset
+func New(files []string) (w *Pkg) {
+	w = &Pkg{weaves: make(map[string]*Weave)}
+	for _, file := range files {
+		w.weaves[filepath.Base(file)] = new(file)
+	}
+	return
+}
+
+func new(filename string) (w *Weave) {
+	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, filename, nil, parser.ParseComments)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	log.Tracef("Weaver package: %+v\n", f.Name)
+	log.Tracef("Weaver pkg: %+v\n", f.Name)
 	for _, c := range f.Comments {
 		log.Tracef("%+v\n", c.Text())
 	}
 
-	w = &weave{file: f, inserts: make(map[string]*ast.Node), deletes: make(map[string]*ast.Node), replaces: make(map[string]*ast.Node), replaceAndCallOriginals: make(map[string]*ast.Node)}
+	w = &Weave{file: f, inserts: make(map[string]*ast.Node), deletes: make(map[string]*ast.Node), replaces: make(map[string]*ast.Node), replaceAndCallOriginals: make(map[string]*ast.Node)}
 
-	// walk the tree once capturing the weave nodes
+	// walk the tree once capturing the Weave nodes
 	ast.Inspect(f, func(n ast.Node) bool {
 		switch t := n.(type) {
 
@@ -59,12 +70,9 @@ func NewWeave(filename string) (w *weave) {
 			if op == nop {
 				break
 			}
-			//if op == replace {
-			//	// TODO If it's a replace then we'll need to:
-			//	// 1. Rename the original method/func
-			//	// 2. Tweak the weave's invocation of the original to the renamed
-			//	op = w.replaceOriginal(t, &n)
-			//}
+			if op == replace {
+				op = w.replaceOriginal(t, &n)
+			}
 			w.addNode(op, t.Name.Name, &n)
 
 			// GenDecl covers const, import, type, and var with Doc (block) comments
@@ -119,18 +127,18 @@ func NewWeave(filename string) (w *weave) {
 		return true
 	})
 
-	log.Tracef("Parsed weave:\n %+v \n", w)
+	log.Tracef("Parsed Weave:\n %+v \n", w)
 	return
 }
 
-func (w *weave) replaceOriginal(decl *ast.FuncDecl, node *ast.Node) (op string) {
+func (w *Weave) replaceOriginal(decl *ast.FuncDecl, node *ast.Node) (op string) {
 	log.Tracef("replaceOriginal: decl: %+v node: %+v", *decl, *node)
 	op = replace
 	// rename the original
 	originalFnName := decl.Name.Name
 	decl.Name.Name = originalFnName + originalSuffix
 	op = insert
-	// walk the weave node replacing the original calls
+	// walk the Weave node replacing the original calls
 	ast.Inspect(*node, func(n ast.Node) bool {
 		switch t := n.(type) {
 		case *ast.CallExpr:
@@ -143,7 +151,7 @@ func (w *weave) replaceOriginal(decl *ast.FuncDecl, node *ast.Node) (op string) 
 	return
 }
 
-func (w *weave) processValueSpec(n *ast.Node, gd *ast.ValueSpec, op string, name string) {
+func (w *Weave) processValueSpec(n *ast.Node, gd *ast.ValueSpec, op string, name string) {
 	switch op {
 	case insert:
 		w.inserts[name] = n
@@ -156,7 +164,7 @@ func (w *weave) processValueSpec(n *ast.Node, gd *ast.ValueSpec, op string, name
 	}
 }
 
-func (w *weave) processTypeSpec(n *ast.Node, gd *ast.TypeSpec, op string, name string) {
+func (w *Weave) processTypeSpec(n *ast.Node, gd *ast.TypeSpec, op string, name string) {
 	switch op {
 	case insert:
 		w.inserts[name] = n
@@ -169,12 +177,12 @@ func (w *weave) processTypeSpec(n *ast.Node, gd *ast.TypeSpec, op string, name s
 	}
 }
 
-func (w *weave) processImportSpec(n *ast.Node, gd *ast.ImportSpec, op string, name string) {
+func (w *Weave) processImportSpec(n *ast.Node, gd *ast.ImportSpec, op string, name string) {
 	switch op {
 	case insert:
-		w.importAdds = append(w.importAdds, gd)
+		w.ImportAdds = append(w.ImportAdds, gd)
 	case delete:
-		w.importDeletes = append(w.importDeletes, gd)
+		w.ImportDeletes = append(w.ImportDeletes, gd)
 	case replace:
 	default:
 	}
@@ -198,7 +206,7 @@ func getGenDeclName(decl *ast.GenDecl) (name string) {
 	return
 }
 
-func (w *weave) addNode(op string, name string, n *ast.Node) {
+func (w *Weave) addNode(op string, name string, n *ast.Node) {
 	switch op {
 	case insert:
 		w.inserts[name] = n
@@ -211,12 +219,12 @@ func (w *weave) addNode(op string, name string, n *ast.Node) {
 	default:
 	}
 }
-func (w *weave) addImport(op string, n *ast.ImportSpec) {
+func (w *Weave) addImport(op string, n *ast.ImportSpec) {
 	switch op {
 	case insert:
-		w.importAdds = append(w.importAdds, n)
+		w.ImportAdds = append(w.ImportAdds, n)
 	case delete:
-		w.importDeletes = append(w.importDeletes, n)
+		w.ImportDeletes = append(w.ImportDeletes, n)
 	default:
 	}
 }
@@ -233,11 +241,8 @@ func valueSpecName(i []*ast.Ident) string {
 	return "Unknown"
 }
 
-// TODO genericize this to deal with more than op:
-//    - function rename
-//    - debug comment
-//    - ?
-func (w *weave) parseCommentGroup(group *ast.CommentGroup) (op string) {
+// TODO genericize this to deal with more than op: function rename, debug comment, ?
+func (w *Weave) parseCommentGroup(group *ast.CommentGroup) (op string) {
 	//log.Tracef("parseCommentGroup:  group: %+v", group)
 	op = nop
 	if group == nil {
@@ -252,7 +257,7 @@ func (w *weave) parseCommentGroup(group *ast.CommentGroup) (op string) {
 	return op
 }
 
-func (w *weave) parseComment(c *ast.Comment) (op string, ok bool) {
+func (w *Weave) parseComment(c *ast.Comment) (op string, ok bool) {
 	op = nop
 	ok = false
 	s := strings.ToLower(strings.Trim(c.Text, " "))
@@ -282,20 +287,13 @@ func (w *weave) parseComment(c *ast.Comment) (op string, ok bool) {
 			}
 			log.Fatalf("parseComment: invalid packageFQN annotation: len: %d %+v text: %s", c, s)
 		}
-		log.Tracef("parseComment: packageName: %s", w.packageName)
-		w.packageName = p[3]
 		op = packageFQN
 		ok = true
 	}
 	return
 }
 
-func (w *weave) GetPackageName() string {
-	log.Tracef("GetPackageName: %s", w.packageName)
-	return w.packageName
-}
-
-func (w *weave) has(n ast.Node) (r ast.Node, ok bool) {
+func (w *Pkg) has(n ast.Node) (r ast.Node, ok bool) {
 	//nn := nodeName(n)
 	//wn, ok := w.inserts[nn]
 	//if ok {
@@ -305,29 +303,41 @@ func (w *weave) has(n ast.Node) (r ast.Node, ok bool) {
 	return
 }
 
-func (w *weave) getReplace(n ast.Node) (r *ast.Node, ok bool) {
+func (w *Weave) GetReplace(n ast.Node) (r *ast.Node, ok bool) {
 	nn := nodeName(n)
 	r, ok = w.replaces[nn]
 	log.Tracef("getReplace: ok: %s nn: %s", ok, nn)
 	return
 }
 
-func (w *weave) getReplaceAndCallOriginal(n ast.Node) (r *ast.Node, ok bool) {
+func (w *Weave) GetReplaceAndCallOriginal(n ast.Node) (r *ast.Node, ok bool) {
 	nn := nodeName(n)
 	r, ok = w.replaceAndCallOriginals[nn]
 	log.Tracef("getReplaceAndCallOriginal: ok: %s nn: %s", ok, nn)
 	return
 }
 
-func (w *weave) getDelete(n ast.Node) (r *ast.Node, ok bool) {
+func (w *Weave) GetDelete(n ast.Node) (r *ast.Node, ok bool) {
 	nn := nodeName(n)
 	r, ok = w.deletes[nn]
 	log.Tracef("getDelete: ok: %s nn: %s", ok, nn)
 	return
 }
 
-func (w *weave) getInserts() map[string]*ast.Node {
+func (w *Weave) GetInserts() map[string]*ast.Node {
 	return w.inserts
+}
+
+func (w *Pkg) GetWeaveForFile(file string) (ww *Weave) {
+	if !strings.HasSuffix(file, ".go") {
+		file = strings.TrimSpace(file) + ".go"
+	}
+	ww = w.weaves[file]
+	log.Debugf("GetWeaveForFile: file: %s weave: %+v weaves: %+v", file, ww, w.weaves)
+	if log.IsLevelEnabled(log.DebugLevel) {
+		//spew.Dump(w.weaves)
+	}
+	return
 }
 
 func nodeName(n ast.Node) (name string) {

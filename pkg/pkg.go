@@ -1,12 +1,11 @@
-package loom
+package pkg
 
 import (
-	"bytes"
 	log "github.com/sirupsen/logrus"
 	"go/ast"
-	"go/printer"
 	"golang.org/x/tools/go/ast/astutil"
 	"golang.org/x/tools/go/packages"
+	"gweaver/weave"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -17,59 +16,61 @@ import (
 type source struct {
 	pkg             *packages.Package
 	isFirstFunction bool
+	mgr             PackageManager
 }
 
-func NewPackage(p string) *source {
+func NewPackage(p string, mgr PackageManager) (s *source) {
 	log.Tracef("NewPackage: name: %s", p)
 	//p = "./" + p
 	cfg := &packages.Config{
 		Mode:  packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedImports | packages.NeedTypes | packages.NeedTypesSizes | packages.NeedSyntax | packages.NeedTypesInfo | packages.NeedDeps,
 		Tests: false,
 	}
+	//pkgs, err := packages.Load(cfg, p+"...")
 	pkgs, err := packages.Load(cfg, p)
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	for _, p := range pkgs {
+		if p.Errors != nil {
+			log.Errorf("Error loading pkg: %s error: %+v", p.Name, p.Errors)
+		}
+	}
+
 	if len(pkgs) != 1 {
-		log.Fatalf("error: %d packages found", len(pkgs))
+		log.Fatalf("error: %d packages found. Name: %s", len(pkgs), p)
 	}
-	if pkgs[0].Errors != nil {
-		log.Fatalf("Error loading package: %s error: %+v", p, pkgs[0].Errors)
-	}
-	log.Tracef("NewPackage: package: %+v", pkgs[0])
-	return &source{pkg: pkgs[0]}
+	log.Tracef("NewPackage: pkg: %+v", pkgs[0])
+
+	s = &source{pkg: pkgs[0], mgr: mgr}
+	mgr.setup(s)
+	log.Debugf("NewPackage: name: %s path: %s", s.pkg.Name, s.pkg.PkgPath)
+	return s
 }
 
-func (p *source) ApplyWeave(w *weave) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Errorf("panic: recover: %+v", r)
-			debug.PrintStack()
-		}
-	}()
-
-	log.Tracef("ApplyWeave")
-
+func (p *source) applyWeave(w *weave.Weave, f *ast.File) ast.Node {
 	// TODO some operations should happen on the parent, delete for instance
-	// preApply & postApply go inside this method so they can capture the weaver pointer
+	// preApply & postApply go inside this method so they can capture the weave pointer
+
+	p.isFirstFunction = true
 	preApply := func(c *astutil.Cursor) (ok bool) {
 		// Insert everything before the first FuncDecl
-		// TODO rather than "first" inserts should be by file
 		if p.firstFunc(c.Node()) {
-			for _, v := range w.getInserts() {
+			for _, v := range w.GetInserts() {
 				log.Tracef("Inserting: %+v", *v)
 				c.InsertBefore(*v)
 			}
 		}
 
 		// Let's see if we replace this node
-		wn, ok := w.getReplace(c.Node())
+		wn, ok := w.GetReplace(c.Node())
 		if ok {
 			log.Tracef("Replace: %+v with: %+v", c.Node(), *wn)
 			c.Replace(*wn)
 		}
 
-		wn, ok = w.getReplaceAndCallOriginal(c.Node())
+		wn, ok = w.GetReplaceAndCallOriginal(c.Node())
 		if ok {
 			log.Tracef("ReplaceAndCallOriginal: %+v with: %+v", c.Node(), *wn)
 			renameAsOriginal(c.Node())
@@ -77,7 +78,7 @@ func (p *source) ApplyWeave(w *weave) {
 		}
 
 		// See if we delete this node
-		wn, ok = w.getDelete(c.Node())
+		wn, ok = w.GetDelete(c.Node())
 		if ok {
 			log.Tracef("Delete: %+v", c.Node())
 			c.Delete()
@@ -88,42 +89,53 @@ func (p *source) ApplyWeave(w *weave) {
 	postApply := func(c *astutil.Cursor) (ok bool) {
 		return true
 	}
+	return astutil.Apply(f, preApply, postApply)
+}
 
+func (p *source) ApplyWeave(wp *weave.Pkg) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Errorf("panic: recover: %+v", r)
+			debug.PrintStack()
+		}
+	}()
+
+	log.Tracef("ApplyWeave")
 	log.Tracef("ApplyWeave: processing p: %+v", *p)
 	log.Tracef("ApplyWeave: processing p.pkg: %+v", *p.pkg)
-	// For each file's AST in the package
-	// TODO copy package to
-	p.copyDir()
+
+	// For each file's AST in the pkg
 	for fi, f := range p.pkg.Syntax {
 		log.Tracef("ApplyWeave: processing f: %+v", f)
-		for _, i := range w.importAdds {
+		// f is *ast.File but f.Name is _really_ the package name! :-(
+		w := wp.GetWeaveForFile(filepath.Base(p.pkg.CompiledGoFiles[fi]))
+		// If the weave is nil there is no weave for this file/ast, write as-is
+		if w == nil {
+			p.mgr.writeWovenFile(f, p.pkg.CompiledGoFiles[fi], p.pkg.Fset)
+			continue
+		}
+
+		for _, i := range w.ImportAdds {
 			if i.Name == nil {
 				astutil.AddImport(p.pkg.Fset, f, pathFix(i.Path.Value))
 			} else {
 				astutil.AddNamedImport(p.pkg.Fset, f, i.Name.String(), pathFix(i.Path.Value))
 			}
 		}
-		for _, i := range w.importDeletes {
+		for _, i := range w.ImportDeletes {
 			if i.Name == nil {
 				astutil.DeleteImport(p.pkg.Fset, f, pathFix(i.Path.Value))
 			} else {
 				astutil.DeleteNamedImport(p.pkg.Fset, f, i.Name.String(), pathFix(i.Path.Value))
 			}
 		}
-		p.isFirstFunction = true
 		log.Tracef("ApplyWeave: f: %+v", f)
-		rewritten := astutil.Apply(f, preApply, postApply)
-		var buf bytes.Buffer
-		printer.Fprint(&buf, p.pkg.Fset, rewritten)
-		p.importPath(f)
-		log.Debugf("Writing file: %s", p.pkg.CompiledGoFiles[fi])
-		//spew.Dump(f)
-		//fmt.Println(buf.String())
-		//ast.Print(p.pkg.Fset, rewritten)
-		// TODO Write must happen per file
+		rewritten := p.applyWeave(w, f)
+		p.mgr.writeWovenFile(rewritten, p.pkg.CompiledGoFiles[fi], p.pkg.Fset)
 	}
 }
 
+// Rename the original func so we can take its place
 func renameAsOriginal(node ast.Node) {
 	switch t := node.(type) {
 	case *ast.FuncDecl:
@@ -148,14 +160,7 @@ func (p *source) firstFunc(n ast.Node) (yes bool) {
 	default:
 		return false
 	}
-
 	return false
-}
-
-func (p *source) Write() {
-	for f := range p.pkg.Syntax {
-		ast.Print(p.pkg.Fset, f)
-	}
 }
 
 func (p *source) importPath(file *ast.File) {

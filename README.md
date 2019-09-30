@@ -6,6 +6,12 @@ A simple source code weaver for Go programs
 - Ensure the `weaver` executable is in the `PATH`
 - Run `go build cmd/weaver/weaver.go  ;  ./weaver -weaveRoot ext`
 
+## Weaving
+1. Each woven package gets a unique directory under `weaveRoot`
+2. _All_ weaves for a package go into the same directory
+3. Each weave `go` file corresponds directly to the original package `go` file
+
+
 ## 
 - Pick-up the weave definition files from the `ext` directory
   - One weave file per `package`
