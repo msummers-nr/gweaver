@@ -1,9 +1,13 @@
 package pkg
 
 import (
+	log "github.com/sirupsen/logrus"
 	"go/ast"
 	"go/token"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 )
 
 type PackageManager interface {
@@ -17,5 +21,54 @@ func CreateDirIfNotExist(dir string) {
 		if err != nil {
 			panic(err)
 		}
+	}
+}
+
+// WARNING
+// Go exec does NOT glob commands, this has to be done MANUALLY
+func copyDir(src, dst string) {
+	var err error
+	// First ensure the dst exists
+	err = os.MkdirAll(dst, os.ModePerm)
+	if err != nil {
+		log.Fatalf("copyDir: error creating output directory: %+v", err)
+	}
+	src = filepath.Clean(src + string(filepath.Separator) + "*")
+	dst = filepath.Clean(dst + string(filepath.Separator))
+	if runtime.GOOS == "windows" {
+		cmd := exec.Command("Xcopy", "/E /I ", src, dst)
+		log.Debugf("copyDir: cmd: %s", cmd.String())
+		err = cmd.Run()
+
+	} else {
+		p := []string{"-R", "-f", "-t", dst}
+		s, err := filepath.Glob(src)
+		if err != nil {
+
+		}
+		p = append(p, s...)
+		cmd := exec.Command("cp", p...)
+		log.Debugf("copyDir: cmd: %s", cmd.String())
+		err = cmd.Run()
+	}
+	if err != nil {
+		log.Fatalf("copyDir: error copying directory: %+v", err)
+	}
+}
+
+func fixPermissions(src string) {
+	var err error
+	if runtime.GOOS == "windows" {
+		cmd := exec.Command("Xcopy", "/E /I ", src)
+		log.Debugf("fixPermissions: cmd: %s", cmd.String())
+		err = cmd.Run()
+
+	} else {
+		cmd := exec.Command("chmod", "-R", "+rw", src)
+		log.Debugf("fixPermissions: cmd: %s", cmd.String())
+		err = cmd.Run()
+	}
+	if err != nil {
+		log.Fatalf("fixPermissions: error: %+v", err)
 	}
 }

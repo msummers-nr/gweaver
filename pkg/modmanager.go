@@ -68,6 +68,7 @@ func NewModManager(writeRoot string, tag string) (m *ModManager) {
 }
 
 // setup deals with things we can only know via source
+// As other package managers are implemented refactor this to make the common steps explicit
 func (m *ModManager) setup(s *source) {
 	m.parsePath(s.pkg.CompiledGoFiles)
 	log.Debugf("modmanager.set: fsPrefix: %s module: %s moduleVersion: %s package: %s", m.fsPrefix, m.modulePath, m.moduleVersion, m.fullPackagePath)
@@ -80,8 +81,13 @@ func (m *ModManager) setup(s *source) {
 	// Create the result directory
 	err := os.MkdirAll(m.fsFullWritePath, os.ModePerm)
 	if err != nil {
-		log.Errorf("modmanager.setup: error creating weave write directory: %s err: %+v", m.fsFullWritePath, err)
+		log.Fatalf("modmanager.setup: error creating weave write directory: %s err: %+v", m.fsFullWritePath, err)
 	}
+
+	src := filepath.Clean(m.fsPrefixOriginal + string(filepath.Separator) + m.modulePath + "@" + m.moduleVersion)
+	dst := filepath.Clean(m.fsPrefix + string(filepath.Separator) + m.modulePath + "@" + m.moduleVersion + m.tag)
+	copyDir(src, dst)
+	fixPermissions(dst)
 
 	// Ensure the resulting module has a go.mod file
 	m.copyOrCreateGoMod()
@@ -157,7 +163,6 @@ func (m *ModManager) copyOrCreateGoMod() {
 	}
 }
 
-// TODO
 func (m *ModManager) updateLocalGoMod() {
 	//replace github.com/davecgh/go-spew => /Users/mike/go/pkg/mod/github.com/davecgh/go-spew@v1.1.1-woven
 	f, err := os.OpenFile("go.mod", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -172,7 +177,7 @@ func (m *ModManager) updateLocalGoMod() {
 	}
 }
 
-// TODO
+// TODO implement module version check
 func (m *ModManager) moduleVersionOk(module string, version string) (ok bool) {
 	return true
 }

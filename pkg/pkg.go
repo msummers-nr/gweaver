@@ -6,9 +6,7 @@ import (
 	"golang.org/x/tools/go/ast/astutil"
 	"golang.org/x/tools/go/packages"
 	"gweaver/weave"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"runtime/debug"
 	"strings"
 )
@@ -165,23 +163,4 @@ func (p *source) firstFunc(n ast.Node) (yes bool) {
 
 func (p *source) importPath(file *ast.File) {
 	log.Debugf("importPath: path: %s file name: %s", p.pkg.PkgPath, file.Name.Name)
-}
-
-func (p *source) copyDir() {
-	src := filepath.Dir(p.pkg.CompiledGoFiles[0])
-	var err error
-	dst := src + ".original"
-	if runtime.GOOS == "windows" {
-		cmd := exec.Command("Xcopy", "/E /I ", src, dst)
-		log.Printf("copyDir: cmd: %s", cmd.String())
-		err = cmd.Run()
-
-	} else {
-		cmd := exec.Command("cp", "-a", src, dst)
-		log.Printf("copyDir: cmd: %s", cmd.String())
-		err = cmd.Run()
-	}
-	if err != nil {
-		log.Errorf("copyDir: error: %+v", err)
-	}
 }
