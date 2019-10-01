@@ -5,6 +5,7 @@ package pkg
 
 import (
 	"bytes"
+	"fmt"
 	log "github.com/sirupsen/logrus"
 	"go/ast"
 	"go/printer"
@@ -31,6 +32,7 @@ type ModManager struct {
 func (m *ModManager) init() {
 	m.modules = make(map[string]string)
 
+	// Build the table of known modules
 	cmd := exec.Command("go", "list", "-m", "all")
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
@@ -49,7 +51,7 @@ func (m *ModManager) init() {
 		switch len(mm) {
 		case 1:
 			m.modules[strings.TrimSpace(mm[0])] = ""
-		case 2:
+		case 2, 4:
 			m.modules[strings.TrimSpace(mm[0])] = strings.TrimSpace(mm[1])
 		default:
 			log.Warnf("modmanager.init: unexpected go list format: %s", s)
@@ -170,9 +172,12 @@ func (m *ModManager) updateLocalGoMod() {
 		log.Errorf("modmanager.updateLocalGoMod: unable to open local go.mod file: %+v", err)
 		return
 	}
-
+	line := fmt.Sprintf("replace %s => %s%s@%s%s", m.modulePath, m.fsPrefix, m.modulePath, m.moduleVersion, m.tag)
+	if fileContains("go.mod", line) {
+		return
+	}
 	defer f.Close()
-	if _, err := f.WriteString("\nreplace " + m.modulePath + " => " + m.fsPrefix + m.modulePath + "@" + m.moduleVersion + m.tag + "\n"); err != nil {
+	if _, err := f.WriteString("\n" + line + "\n"); err != nil {
 		log.Println(err)
 	}
 }

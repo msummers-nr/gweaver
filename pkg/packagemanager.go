@@ -4,10 +4,12 @@ import (
 	log "github.com/sirupsen/logrus"
 	"go/ast"
 	"go/token"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 type PackageManager interface {
@@ -71,4 +73,15 @@ func fixPermissions(src string) {
 	if err != nil {
 		log.Fatalf("fixPermissions: error: %+v", err)
 	}
+}
+
+func fileContains(file string, query string) (ok bool) {
+	b, err := ioutil.ReadFile(file)
+	if err != nil {
+		log.Errorf("fileContains: file: %s err: %+v", file, err)
+		return false
+	}
+	s := string(b)
+	// //check whether s contains substring text
+	return strings.Contains(s, query)
 }
