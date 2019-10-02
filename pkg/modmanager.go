@@ -32,7 +32,7 @@ type ModManager struct {
 func (m *ModManager) init() {
 	m.modules = make(map[string]string)
 
-	// Build the table of known modules
+	// Build the table of known modules with versions
 	cmd := exec.Command("go", "list", "-m", "all")
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
